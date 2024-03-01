@@ -2,6 +2,10 @@ use raylib::prelude::*;
 
 use crate::{Renderer, game::Settings};
 
+use std::io::Write;
+use std::fs::File;
+use std::fs;
+
 const HEIGHT: i32 = 1000;
 const WIDTH: i32 = 800;
 
@@ -27,6 +31,31 @@ impl Label {
     }
 }
 
+pub struct Config {
+    highscore: u16,
+}
+
+impl Config {
+    pub fn load() -> Result<Config, Box<dyn std::error::Error>> {
+        let bytes = fs::read("config.tr")?.iter().map(|x| *x as u16).collect::<Vec<u16>>();
+
+        Ok(Config {
+            highscore: bytes[0] << 8 | bytes[1],
+        })
+    }
+
+    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut fd = File::create("config.tr")?;
+
+        fd.write_all(&[
+            ((self.highscore & 0xff00) >> 8) as u8,
+            (self.highscore & 0x00ff) as u8,
+        ])?;
+
+        Ok(())
+    }
+}
+
 pub struct Menu {
     rl: RaylibHandle,
     thread: RaylibThread,
@@ -37,6 +66,7 @@ pub struct Menu {
     labels: Vec<Label>,
     title: &'static str,
     should_close: bool,
+    config: Config,
 }
 
 impl Menu {
@@ -59,11 +89,13 @@ impl Menu {
             assets,
             settings: Settings {
                 smooth: true,
+                mode3d: true,
             },
             selected: 0,
             labels: vec![Label::Button("Play"), Label::Button("Settings"), Label::Button("Exit")],
             title: "Tetris",
             should_close: false,
+            config: Config::load()?,
         })
     }
 
@@ -153,7 +185,48 @@ impl Menu {
                 2.0,
                 fg
             );
+
         }
+
+        // highscore
+        drawer.draw_rectangle_rounded(
+            Rectangle::new(
+                10.0,
+                10.0,
+                300.0,
+                60.0,
+            ),
+            0.3,
+            200,
+            bg
+        );
+
+        drawer.draw_rectangle_rounded_lines(
+            Rectangle::new(
+                10.0,
+                10.0,
+                300.0,
+                60.0,
+            ),
+            0.3,
+            200,
+            1,
+            fg
+        );
+
+        let score = format!("highscore: {}", self.config.highscore);
+
+        drawer.draw_text_ex(
+            &self.assets.font,
+            &score,
+            Vector2::new(
+                20.0,
+                18.0,
+            ),
+            40.0,
+            2.0,
+            fg
+        );
 
         Ok(())
     }
@@ -188,6 +261,12 @@ impl Menu {
 
         renderer.run()?;
 
+        if renderer.game.score.lines > self.config.highscore as u32 {
+            self.config.highscore = renderer.game.score.lines as u16;
+        }
+
+        self.config.save()?;
+
         Ok(())
     }
 
@@ -198,6 +277,8 @@ impl Menu {
             self.play_game()?;
         } else if label == "Smooth" {
             self.settings.smooth = !self.settings.smooth;
+        } else if label == "3D mode" {
+            self.settings.mode3d = !self.settings.mode3d;
         } else if label == "Settings" {
             self.selected = 0;
             self.title = "Settings";
@@ -213,7 +294,7 @@ impl Menu {
 
     fn update_menu(&mut self) {
         if self.title == "Settings" {
-            self.labels = vec![Label::Toggle { label: "Smooth", state: self.settings.smooth }, Label::Button("Back")];
+            self.labels = vec![Label::Toggle { label: "3D mode", state: self.settings.mode3d }, Label::Toggle { label: "Smooth", state: self.settings.smooth }, Label::Button("Back")];
         } else if self.title == "Tetris" {
             self.labels = vec![Label::Button("Play"), Label::Button("Settings"), Label::Button("Exit")];
         }

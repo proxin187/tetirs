@@ -19,6 +19,10 @@ pub struct Position {
     pub y: usize,
 }
 
+pub struct Score {
+    pub lines: u32,
+}
+
 pub struct Game {
     lines: Vec<Vec<bool>>,
 
@@ -26,24 +30,23 @@ pub struct Game {
     shape: Vec<Position>,
     shapes: TShape,
 
-    score: usize,
+    pub score: Score,
     debug: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct Settings {
     pub smooth: bool,
+    pub mode3d: bool,
 }
 
 pub struct Assets {
+    theme: Sound,
     thump: Sound,
     metal_crate: Model,
     table: Model,
     shader: Shader,
-}
-
-pub struct Score {
-    current: u32,
+    tbox: Texture2D,
 }
 
 pub struct Renderer<'a> {
@@ -52,7 +55,7 @@ pub struct Renderer<'a> {
     audio: &'a mut RaylibAudio,
     framebuffer: RenderTexture2D,
     camera: Camera3D,
-    game: Game,
+    pub game: Game,
     assets: Assets,
     settings: Settings,
 }
@@ -61,11 +64,16 @@ impl<'a> Renderer<'a> {
     pub fn new(rl: &'a mut RaylibHandle, thread: &'a RaylibThread, audio: &'a mut RaylibAudio, settings: Settings) -> Result<Renderer<'a>, Box<dyn std::error::Error>> {
         rl.set_window_title(thread, "Playing Tetris");
 
+        let mut tbox = Image::load_image("assets/textures/tbox.png")?;
+        tbox.resize(90, 90);
+
         let mut assets = Assets {
+            theme: Sound::load_sound("assets/sounds/theme.mp3")?,
             thump: Sound::load_sound("assets/sounds/thump.mp3")?,
             metal_crate: rl.load_model(&thread, "assets/box.obj")?,
             table: rl.load_model(&thread, "assets/table.obj")?,
             shader: rl.load_shader(&thread, None, Some("assets/shaders/shader.fs"))?,
+            tbox: rl.load_texture_from_image(&thread, &tbox)?,
         };
 
         Self::apply_texture(
@@ -109,7 +117,9 @@ impl<'a> Renderer<'a> {
                 shape: shapes.rand_shape(),
                 shapes,
 
-                score: 0,
+                score: Score {
+                    lines: 0,
+                },
                 debug: false,
             },
             assets,
@@ -157,9 +167,9 @@ impl<'a> Renderer<'a> {
         let fps = self.rl.get_fps();
         let mut drawer = self.rl.begin_drawing(&self.thread);
 
-        drawer.clear_background(Color::WHITE);
+        drawer.clear_background(Color::BLACK);
 
-        {
+        if self.settings.mode3d {
             let mut texture_drawer = drawer.begin_texture_mode(&self.thread, &mut self.framebuffer);
             texture_drawer.clear_background(Color::from_hex("0B0D13")?);
 
@@ -219,28 +229,50 @@ impl<'a> Renderer<'a> {
                     }
                 }
             }
+        } else {
+            // render 2d
+            for (y, line) in self.game.lines.iter().enumerate() {
+                for (x, block) in line.iter().enumerate() {
+                    let mut position = Vector2::new(
+                        (x as f32 * -90.0) + 530.0,
+                        (y as f32 * -90.0) + 700.0,
+                    );
+
+                    if *block {
+                        drawer.draw_texture(&self.assets.tbox, position.x as i32, position.y as i32, Color::WHITE);
+                    } else if self.game.shape.contains(&Position { x, y }) {
+                        if self.settings.smooth {
+                            position.y += 180.0 * self.game.delta.elapsed().as_secs_f32();
+                        }
+
+                        drawer.draw_texture(&self.assets.tbox, position.x as i32, position.y as i32, Color::WHITE);
+                    }
+                }
+            }
         }
 
-        // shaders
-        {
-            let mut shader = drawer.begin_shader_mode(&self.assets.shader);
+        if self.settings.mode3d {
+            // shaders
+            {
+                let mut shader = drawer.begin_shader_mode(&self.assets.shader);
 
-            shader.draw_texture_rec(
-                self.framebuffer.texture(),
-                Rectangle::new(
-                    0.0,
-                    0.0,
-                    self.framebuffer.texture.width as f32,
-                    -self.framebuffer.texture.height as f32,
-                ),
-                Vector2::new(0.0, 0.0),
-                Color::WHITE
-            );
+                shader.draw_texture_rec(
+                    self.framebuffer.texture(),
+                    Rectangle::new(
+                        0.0,
+                        0.0,
+                        self.framebuffer.texture.width as f32,
+                        -self.framebuffer.texture.height as f32,
+                    ),
+                    Vector2::new(0.0, 0.0),
+                    Color::WHITE
+                );
+            }
         }
 
         // Score
         {
-            let score = format!("{}", self.game.score);
+            let score = format!("{}", self.game.score.lines);
 
             drawer.draw_text(
                 &score,
@@ -382,6 +414,11 @@ impl<'a> Renderer<'a> {
                 KeyboardKey::KEY_UP => {
                     self.rotate_shape();
                 },
+                KeyboardKey::KEY_DOWN => {
+                    if !self.is_collision() {
+                        self.move_down();
+                    }
+                },
                 _ => {},
             }
         }
@@ -397,7 +434,9 @@ impl<'a> Renderer<'a> {
         for position in &self.game.shape {
             if position.y == 0 {
                 return true;
-            } else if self.game.lines[position.y - 1][position.x] {
+            }
+
+            if self.game.lines[position.y - 1][position.x] || self.game.lines[position.y][position.x] {
                 return true;
             }
         }
@@ -407,9 +446,7 @@ impl<'a> Renderer<'a> {
 
     fn update_position(&mut self) {
         if self.game.delta.elapsed() >= Duration::from_secs_f64(0.5) {
-            for index in 0..self.game.shape.len() {
-                self.game.shape[index].y -= 1;
-            }
+            self.move_down();
 
             if self.is_collision() {
                 self.audio.play_sound(&self.assets.thump);
@@ -422,6 +459,14 @@ impl<'a> Renderer<'a> {
             }
 
             self.game.delta = Instant::now();
+        }
+    }
+
+    fn move_down(&mut self) {
+        for index in 0..self.game.shape.len() {
+            if self.game.shape[index].y > 0 {
+                self.game.shape[index].y -= 1;
+            }
         }
     }
 
@@ -440,10 +485,19 @@ impl<'a> Renderer<'a> {
 
         for line in self.game.lines.clone() {
             if self.is_valid_point(&line) {
-                self.game.lines[index] = vec![false; 5];
+                self.game.lines.remove(index);
+                self.game.lines.push(vec![false; 5]);
+
+                self.game.score.lines += 1;
             }
 
             index += 1;
+        }
+    }
+
+    fn play_theme(&mut self) {
+        if !self.audio.is_sound_playing(&self.assets.theme) {
+            self.audio.play_sound(&self.assets.theme);
         }
     }
 
@@ -453,6 +507,7 @@ impl<'a> Renderer<'a> {
         while !self.rl.window_should_close() {
             self.draw()?;
             self.lock_size();
+            self.play_theme();
             self.handle_input();
             self.update_position();
             self.update_lines();
