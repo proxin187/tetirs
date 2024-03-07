@@ -235,7 +235,7 @@ impl<'a> Renderer<'a> {
                 for (x, block) in line.iter().enumerate() {
                     let mut position = Vector2::new(
                         (x as f32 * -90.0) + 530.0,
-                        (y as f32 * -90.0) + 700.0,
+                        (y as f32 * -90.0) + 900.0,
                     );
 
                     if *block {
