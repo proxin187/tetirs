@@ -11,6 +11,7 @@ const WIDTH: i32 = 800;
 
 pub struct Assets {
     font: Font,
+    logo: Texture2D,
 }
 
 #[derive(PartialEq)]
@@ -78,8 +79,12 @@ impl Menu {
 
         let audio = RaylibAudio::init_audio_device();
 
+        let mut logo = Image::load_image("assets/ui/bg.png")?;
+        logo.resize(300, 300);
+
         let assets = Assets {
             font: rl.load_font_ex(&thread, "assets/ui/InriaSerif-Regular.ttf", 60, FontLoadEx::Default(256))?,
+            logo: rl.load_texture_from_image(&thread, &logo)?,
         };
 
         Ok(Menu {
@@ -107,8 +112,11 @@ impl Menu {
         let fg = Color::from_hex("FFFFFF")?;
         let bg = Color::from_hex("0F1923")?;
 
-        let size = text::measure_text_ex(&self.assets.font, self.title, 40.0, 42.0);
+        // let size = text::measure_text_ex(&self.assets.font, self.title, 40.0, 42.0);
 
+        drawer.draw_texture(&self.assets.logo, (WIDTH / 2) - (self.assets.logo.width / 2), 130, Color::WHITE);
+
+        /*
         drawer.draw_text_ex(
             &self.assets.font,
             self.title,
@@ -120,6 +128,7 @@ impl Menu {
             42.0 - ((size.x - 300.0) / (self.title.len() - 1) as f32),
             fg
         );
+        */
 
         for (index, label) in self.labels.iter().enumerate() {
             drawer.draw_rectangle_rounded(
